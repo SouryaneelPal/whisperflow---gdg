@@ -1,0 +1,39 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// No column here may identify a reporter: no IP, user agent, email or device id.
+model Report {
+  id           String         @id @default(uuid())
+  caseCodeHash String         @unique
+  category     String
+  description  String
+  evidenceUrl  String?
+  status       String         @default("SUBMITTED")
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+  updates      StatusUpdate[]
+}
+
+model StatusUpdate {
+  id        String   @id @default(uuid())
+  reportId  String
+  report    Report   @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  status    String
+  message   String
+  createdAt DateTime @default(now())
+
+  @@index([reportId])
+}
+
+model Moderator {
+  id           String   @id @default(uuid())
+  username     String   @unique
+  passwordHash String
+  createdAt    DateTime @default(now())
+}
