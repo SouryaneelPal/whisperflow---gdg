@@ -1,10 +1,16 @@
 import cors from 'cors';
 import express from 'express';
 import helmet from 'helmet';
+import { env } from './config/env';
 import { errorHandler, notFound } from './middleware/errorHandler';
 import routes from './routes';
 
 const app = express();
+
+// Behind a hosting proxy every request seems to come from the proxy's IP, so the rate limiters
+// would throttle all users as one. Trusting more hops than really exist lets a client fake
+// X-Forwarded-For to dodge the limits, so set this to the exact number of proxies in front.
+if (env.TRUST_PROXY > 0) app.set('trust proxy', env.TRUST_PROXY);
 
 app.use(helmet());
 app.use(cors());
