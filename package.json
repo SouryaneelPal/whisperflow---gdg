@@ -6,7 +6,7 @@
   "scripts": {
     "test": "vitest run",
     "dev": "tsx watch src/server.ts",
-    "build": "tsc",
+    "build": "tsc && mkdir -p dist/docs && cp src/docs/openapi.yaml dist/docs/",
     "start": "node dist/server.js",
     "seed": "tsx prisma/seed.ts",
     "db:push": "prisma db push"

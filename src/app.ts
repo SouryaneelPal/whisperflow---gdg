@@ -4,6 +4,7 @@ import helmet from 'helmet';
 import { env } from './config/env';
 import { errorHandler, notFound } from './middleware/errorHandler';
 import routes from './routes';
+import docsRoutes from './routes/docs.routes';
 
 const app = express();
 
@@ -19,6 +20,8 @@ app.use(express.json());
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok' });
 });
+
+app.use('/docs', docsRoutes);
 
 // Reports and tracking data must never be kept by browsers or proxies.
 app.use('/api', (_req, res, next) => {
