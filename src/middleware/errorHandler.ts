@@ -18,7 +18,8 @@ export function errorHandler(err: unknown, _req: Request, res: Response, _next: 
   const known = err instanceof AppError ? err : fromBodyParser(err);
 
   if (known) {
-    res.status(known.status).json({ error: { code: known.code, message: known.message } });
+    const { code, message, details } = known;
+    res.status(known.status).json({ error: { code, message, details } });
     return;
   }
 
