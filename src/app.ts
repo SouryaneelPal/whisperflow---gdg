@@ -14,6 +14,12 @@ app.get('/health', (_req, res) => {
   res.json({ status: 'ok' });
 });
 
+// Reports and tracking data must never be kept by browsers or proxies.
+app.use('/api', (_req, res, next) => {
+  res.set('Cache-Control', 'no-store');
+  next();
+});
+
 app.use('/api', routes);
 
 app.use(notFound);
