@@ -8,7 +8,8 @@ import { ListQuery } from '../validators/moderator.schema';
 // Responses are built field by field so nothing like caseCodeHash can leak by accident.
 type UpdateRow = Pick<StatusUpdate, 'status' | 'message' | 'createdAt'>;
 type SummaryRow = Pick<Report, 'id' | 'category' | 'status' | 'description' | 'createdAt' | 'updatedAt'>;
-type DetailRow = SummaryRow & Pick<Report, 'evidenceUrl'> & { updates: UpdateRow[] };
+type AuditedUpdateRow = UpdateRow & { moderator: { username: string } | null };
+type DetailRow = SummaryRow & Pick<Report, 'evidenceUrl'> & { updates: AuditedUpdateRow[] };
 
 function toUpdate(update: UpdateRow) {
   return { status: update.status, message: update.message, createdAt: update.createdAt };
@@ -34,7 +35,7 @@ function toDetail(report: DetailRow) {
     status: report.status,
     createdAt: report.createdAt,
     updatedAt: report.updatedAt,
-    updates: report.updates.map(toUpdate),
+    updates: report.updates.map((update) => ({ ...toUpdate(update), by: update.moderator?.username ?? null })),
   };
 }
 
@@ -59,7 +60,12 @@ export async function getReport(req: Request<{ id: string }>, res: Response) {
 }
 
 export async function updateStatus(req: Request<{ id: string }>, res: Response) {
-  const { report, update } = await changeStatus(req.params.id, req.body.status, req.body.message);
+  const { report, update } = await changeStatus(
+    req.params.id,
+    req.body.status,
+    req.body.message,
+    res.locals.moderatorId,
+  );
 
   res.json({
     report: { id: report.id, category: report.category, status: report.status, updatedAt: report.updatedAt },
@@ -68,7 +74,7 @@ export async function updateStatus(req: Request<{ id: string }>, res: Response) 
 }
 
 export async function createNote(req: Request<{ id: string }>, res: Response) {
-  const update = await addNote(req.params.id, req.body.message);
+  const update = await addNote(req.params.id, req.body.message, res.locals.moderatorId);
 
   res.status(201).json({ update: toUpdate(update) });
 }

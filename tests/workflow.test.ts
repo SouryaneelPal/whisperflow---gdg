@@ -157,3 +157,48 @@ describe('reporter view', () => {
     ]);
   });
 });
+
+describe('audit trail', () => {
+  async function reviewedByAlice() {
+    const report = await submitReport();
+    await changeStatus(report.id, { status: 'UNDER_REVIEW', message: 'We are looking into this.' });
+    return report;
+  }
+
+  it('shows the moderator who made each update in the detail view', async () => {
+    const { id } = await reviewedByAlice();
+    await createModerator('bob');
+    const bobToken = await loginAs('bob');
+    await api.post(`/api/moderator/reports/${id}/updates`).set('Authorization', `Bearer ${bobToken}`).send({ message: 'Facilities contacted.' });
+
+    const res = await api.get(`/api/moderator/reports/${id}`).set('Authorization', `Bearer ${token}`);
+
+    expect(res.body.updates.map((u: { by: string | null }) => u.by)).toEqual([null, 'alice', 'bob']);
+  });
+
+  it('never shows moderator ids or usernames to the reporter', async () => {
+    const { caseCode } = await reviewedByAlice();
+    const alice = await prisma.moderator.findUniqueOrThrow({ where: { username: 'alice' } });
+
+    const res = await api.get('/api/reports/status').set('X-Case-Code', caseCode);
+
+    expect(res.body.updates).toHaveLength(2);
+    for (const update of res.body.updates) {
+      expect(Object.keys(update).sort()).toEqual(['createdAt', 'message', 'status']);
+    }
+    expect(res.text).not.toContain(alice.id);
+    expect(res.text).not.toContain('alice');
+  });
+
+  it('keeps past updates when their moderator is deleted', async () => {
+    const { id } = await reviewedByAlice();
+
+    await prisma.moderator.delete({ where: { username: 'alice' } });
+
+    const updates = await prisma.statusUpdate.findMany({ where: { reportId: id }, orderBy: { createdAt: 'asc' } });
+    expect(updates.map((u) => [u.message, u.moderatorId])).toEqual([
+      ['Report received', null],
+      ['We are looking into this.', null],
+    ]);
+  });
+});

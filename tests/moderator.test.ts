@@ -218,7 +218,7 @@ describe('GET /api/moderator/reports/:id', () => {
       status: 'SUBMITTED',
       createdAt: expect.any(String),
       updatedAt: expect.any(String),
-      updates: [{ status: 'SUBMITTED', message: 'Report received', createdAt: expect.any(String) }],
+      updates: [{ status: 'SUBMITTED', message: 'Report received', createdAt: expect.any(String), by: null }],
     });
   });
 

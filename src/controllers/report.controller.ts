@@ -1,6 +1,12 @@
+import { StatusUpdate } from '@prisma/client';
 import { Request, Response } from 'express';
 import { createReport, findReportByCaseCode } from '../services/report.service';
 import { AppError } from '../utils/AppError';
+
+// Built field by field so the reporter never sees which moderator handled their report.
+function toReporterUpdate(update: Pick<StatusUpdate, 'status' | 'message' | 'createdAt'>) {
+  return { status: update.status, message: update.message, createdAt: update.createdAt };
+}
 
 export async function submitReport(req: Request, res: Response) {
   const { caseCode, status } = await createReport(req.body);
@@ -22,6 +28,6 @@ export async function trackReport(req: Request, res: Response) {
     category: report.category,
     status: report.status,
     submittedAt: report.createdAt,
-    updates: report.updates,
+    updates: report.updates.map(toReporterUpdate),
   });
 }

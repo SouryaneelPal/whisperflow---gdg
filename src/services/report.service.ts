@@ -70,14 +70,14 @@ export function findReport(id: string) {
       createdAt: true,
       updatedAt: true,
       updates: {
-        select: { status: true, message: true, createdAt: true },
+        select: { status: true, message: true, createdAt: true, moderator: { select: { username: true } } },
         orderBy: { createdAt: 'asc' },
       },
     },
   });
 }
 
-export async function changeStatus(id: string, status: Status, message: string) {
+export async function changeStatus(id: string, status: Status, message: string, moderatorId: string) {
   return prisma.$transaction(async (tx) => {
     const report = await tx.report.findUnique({ where: { id }, select: { status: true } });
     if (!report) throw new AppError(404, 'REPORT_NOT_FOUND', 'Report not found');
@@ -101,7 +101,7 @@ export async function changeStatus(id: string, status: Status, message: string) 
       throw new AppError(409, 'STATUS_CHANGED', 'The status was changed by someone else. Reload the report and try again.');
     }
 
-    const update = await tx.statusUpdate.create({ data: { reportId: id, status, message } });
+    const update = await tx.statusUpdate.create({ data: { reportId: id, moderatorId, status, message } });
     const updated = await tx.report.findUniqueOrThrow({
       where: { id },
       select: { id: true, category: true, status: true, updatedAt: true },
@@ -113,7 +113,7 @@ export async function changeStatus(id: string, status: Status, message: string) 
 
 // Every update message is shown to the reporter through their case code, so this is not a
 // place for internal moderator notes.
-export async function addNote(id: string, message: string) {
+export async function addNote(id: string, message: string, moderatorId: string) {
   return prisma.$transaction(async (tx) => {
     const report = await tx.report.findUnique({ where: { id }, select: { status: true } });
     if (!report) throw new AppError(404, 'REPORT_NOT_FOUND', 'Report not found');
@@ -124,6 +124,6 @@ export async function addNote(id: string, message: string) {
     });
     if (count === 0) throw new AppError(409, 'CASE_CLOSED', 'This report is closed');
 
-    return tx.statusUpdate.create({ data: { reportId: id, status: report.status, message } });
+    return tx.statusUpdate.create({ data: { reportId: id, moderatorId, status: report.status, message } });
   });
 }

@@ -21,19 +21,23 @@ model Report {
 }
 
 model StatusUpdate {
-  id        String   @id @default(uuid())
-  reportId  String
-  report    Report   @relation(fields: [reportId], references: [id], onDelete: Cascade)
-  status    String
-  message   String
-  createdAt DateTime @default(now())
+  id          String     @id @default(uuid())
+  reportId    String
+  report      Report     @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  // Null for the automatic "Report received" entry and after a moderator is deleted.
+  moderatorId String?
+  moderator   Moderator? @relation(fields: [moderatorId], references: [id], onDelete: SetNull)
+  status      String
+  message     String
+  createdAt   DateTime   @default(now())
 
   @@index([reportId])
 }
 
 model Moderator {
-  id           String   @id @default(uuid())
-  username     String   @unique
+  id           String         @id @default(uuid())
+  username     String         @unique
   passwordHash String
-  createdAt    DateTime @default(now())
+  createdAt    DateTime       @default(now())
+  updates      StatusUpdate[]
 }
