@@ -7,3 +7,4 @@ coverage
 CLAUDE.md
 .claude/
 test.db
+.DS_Store
