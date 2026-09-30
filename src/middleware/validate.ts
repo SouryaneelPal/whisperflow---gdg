@@ -11,16 +11,19 @@ function toProblems(error: z.ZodError): FieldProblem[] {
   });
 }
 
-export function validate(schema: z.ZodType) {
-  return (req: Request, _res: Response, next: NextFunction) => {
-    const result = schema.safeParse(req.body);
+export function validate(schema: z.ZodType, source: 'body' | 'query' = 'body') {
+  return (req: Request, res: Response, next: NextFunction) => {
+    const result = schema.safeParse(req[source]);
 
     if (!result.success) {
-      next(new AppError(400, 'VALIDATION_ERROR', 'Request body is invalid', toProblems(result.error)));
+      const message = source === 'body' ? 'Request body is invalid' : 'Query parameters are invalid';
+      next(new AppError(400, 'VALIDATION_ERROR', message, toProblems(result.error)));
       return;
     }
 
-    req.body = result.data;
+    // Express 5 makes req.query read-only, so parsed query values live in res.locals.
+    if (source === 'query') res.locals.query = result.data;
+    else req.body = result.data;
     next();
   };
 }

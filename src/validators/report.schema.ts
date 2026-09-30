@@ -1,9 +1,11 @@
 import { z } from 'zod';
 import { CATEGORIES } from '../domain/statusWorkflow';
 
+export const categorySchema = z.enum(CATEGORIES, { error: `Must be one of ${CATEGORIES.join(', ')}` });
+
 // Strict so that no extra data (contact details, device info) can be stored alongside a report.
 export const reportSchema = z.strictObject({
-  category: z.enum(CATEGORIES, { error: `Must be one of ${CATEGORIES.join(', ')}` }),
+  category: categorySchema,
   description: z
     .string({ error: 'Must be a string' })
     .trim()

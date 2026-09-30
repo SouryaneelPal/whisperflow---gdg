@@ -10,3 +10,5 @@ export const TRANSITIONS: Record<Status, readonly Status[]> = {
   RESOLVED: [],
   DISMISSED: [],
 };
+
+export const OPEN_STATUSES: Status[] = ['SUBMITTED', 'UNDER_REVIEW'];
