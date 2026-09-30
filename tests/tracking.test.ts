@@ -1,7 +1,6 @@
-import request from 'supertest';
 import { describe, expect, it } from 'vitest';
-import app from '../src/app';
 import { formatCaseCode, generateCaseCode } from '../src/services/caseCode.service';
+import { api } from './helpers';
 
 const report = {
   category: 'HARASSMENT',
@@ -9,12 +8,12 @@ const report = {
 };
 
 async function submit() {
-  const res = await request(app).post('/api/reports').send(report);
+  const res = await api.post('/api/reports').send(report);
   return res.body.caseCode as string;
 }
 
 function track(caseCode?: string) {
-  const req = request(app).get('/api/reports/status');
+  const req = api.get('/api/reports/status');
   return caseCode === undefined ? req : req.set('X-Case-Code', caseCode);
 }
 

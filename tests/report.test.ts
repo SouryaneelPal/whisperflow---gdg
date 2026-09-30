@@ -1,9 +1,8 @@
 import crypto from 'node:crypto';
-import request from 'supertest';
 import { describe, expect, it } from 'vitest';
-import app from '../src/app';
 import { prisma } from '../src/db';
 import { generateCaseCode } from '../src/services/caseCode.service';
+import { api } from './helpers';
 
 const report = {
   category: 'SECURITY',
@@ -12,7 +11,7 @@ const report = {
 };
 
 function submit(body: object) {
-  return request(app).post('/api/reports').send(body);
+  return api.post('/api/reports').send(body);
 }
 
 describe('POST /api/reports', () => {
