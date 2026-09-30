@@ -1,5 +1,615 @@
 openapi: 3.0.3
 info:
   title: WhistleDrop API
-  version: 0.1.0
-paths: {}
+  version: 1.0.0
+  description: |
+    Backend for confidential reporting. Anyone can submit a report without an
+    account and follow its progress with a case code. Moderators sign in to
+    review reports and move them through the workflow.
+
+    **Workflow:** `SUBMITTED` to `UNDER_REVIEW` to `RESOLVED` or `DISMISSED`.
+    Resolved and dismissed reports are closed for good.
+
+    **Anonymity:** the server never stores or logs IP addresses, user agents or
+    other request metadata. Only a hash of the case code is stored, so the code
+    cannot be recovered if it is lost.
+
+    **Visibility:** every status update message is shown to the reporter through
+    their case code, so moderators must not write internal notes in updates.
+
+    **Errors on any endpoint:** every error has the shape
+    `{ "error": { "code", "message" } }`. Besides the codes shown on each
+    operation, any endpoint can return `INVALID_JSON` (400), `PAYLOAD_TOO_LARGE`
+    (413), `UNSUPPORTED_ENCODING` (415), `NOT_FOUND` (404, unknown route) or
+    `INTERNAL_ERROR` (500, with no internal details).
+servers:
+  - url: /
+tags:
+  - name: Reporter
+    description: Public endpoints, no account needed.
+  - name: Moderator
+    description: Protected endpoints. Sign in first, then use the token.
+  - name: System
+paths:
+  /health:
+    get:
+      tags: [System]
+      summary: Check that the server is running
+      responses:
+        "200":
+          description: Server is up
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+  /api/reports:
+    post:
+      tags: [Reporter]
+      summary: Submit an anonymous report
+      description: >
+        Returns a case code exactly once. Only its hash is stored, so the
+        reporter must save it.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NewReport"
+      responses:
+        "201":
+          description: Report created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReportCreated"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+  /api/reports/status:
+    get:
+      tags: [Reporter]
+      summary: Check a report's progress with its case code
+      description: >
+        The code goes in the X-Case-Code header instead of the URL, so it stays
+        out of access logs and browser history. A malformed code and an unknown
+        code give the same 404 on purpose.
+      security:
+        - caseCode: []
+      responses:
+        "200":
+          description: Current status and visible updates, oldest first
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrackedReport"
+        "400":
+          description: The X-Case-Code header is missing
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error:
+                  code: MISSING_CASE_CODE
+                  message: X-Case-Code header is required
+        "404":
+          description: No report matches this case code
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error:
+                  code: CASE_NOT_FOUND
+                  message: No report matches this case code
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+  /api/moderator/login:
+    post:
+      tags: [Moderator]
+      summary: Sign in as a moderator
+      description: >
+        A wrong username and a wrong password return the same error. Every
+        attempt, successful or not, counts toward the limit of 5 per 15 minutes.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: Signed in
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoginResponse"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          description: Wrong username or password
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error:
+                  code: INVALID_CREDENTIALS
+                  message: Invalid username or password
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+  /api/moderator/reports:
+    get:
+      tags: [Moderator]
+      summary: List reports, newest first
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: category
+          in: query
+          schema:
+            $ref: "#/components/schemas/Category"
+        - name: status
+          in: query
+          schema:
+            $ref: "#/components/schemas/Status"
+        - name: q
+          in: query
+          description: Search inside report descriptions (max 100 characters)
+          schema:
+            type: string
+            maxLength: 100
+        - name: page
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+      responses:
+        "200":
+          description: One page of reports
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReportPage"
+        "400":
+          description: Unknown query parameter or invalid value
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error:
+                  code: VALIDATION_ERROR
+                  message: Query parameters are invalid
+                  details:
+                    - field: status
+                      message: Must be one of SUBMITTED, UNDER_REVIEW, RESOLVED, DISMISSED
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/moderator/reports/{id}:
+    get:
+      tags: [Moderator]
+      summary: View one report with its full update history
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ReportId"
+      responses:
+        "200":
+          description: The report
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ModeratorReport"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/ReportNotFound"
+  /api/moderator/reports/{id}/status:
+    patch:
+      tags: [Moderator]
+      summary: Move a report to its next status
+      description: >
+        Allowed moves: SUBMITTED to UNDER_REVIEW, and UNDER_REVIEW to RESOLVED
+        or DISMISSED. The message is shown to the reporter.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ReportId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StatusChange"
+      responses:
+        "200":
+          description: Status changed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusChangeResult"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/ReportNotFound"
+        "409":
+          description: The change is not allowed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              examples:
+                invalidChange:
+                  summary: Not an allowed move
+                  value:
+                    error:
+                      code: INVALID_STATUS_CHANGE
+                      message: "Cannot change a SUBMITTED report to RESOLVED. Allowed next: UNDER_REVIEW"
+                closed:
+                  summary: The report is already closed
+                  value:
+                    error:
+                      code: CASE_CLOSED
+                      message: This report is closed
+                changedByOther:
+                  summary: Another moderator changed it first
+                  value:
+                    error:
+                      code: STATUS_CHANGED
+                      message: The status was changed by someone else. Reload the report and try again.
+        "503":
+          $ref: "#/components/responses/Busy"
+  /api/moderator/reports/{id}/updates:
+    post:
+      tags: [Moderator]
+      summary: Add a note without changing the status
+      description: >
+        The note is visible to the reporter. Not allowed on a closed report.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ReportId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NoteRequest"
+      responses:
+        "201":
+          description: Note added
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NoteResult"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/ReportNotFound"
+        "409":
+          description: The report is closed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error:
+                  code: CASE_CLOSED
+                  message: This report is closed
+        "503":
+          $ref: "#/components/responses/Busy"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    caseCode:
+      type: apiKey
+      in: header
+      name: X-Case-Code
+  parameters:
+    ReportId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      example: b0f3c1de-5a27-4c59-9a43-2d8f6e1c7a90
+  responses:
+    ValidationError:
+      description: The request data is invalid
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error:
+              code: VALIDATION_ERROR
+              message: Request body is invalid
+              details:
+                - field: description
+                  message: Must be at least 10 characters
+    Unauthorized:
+      description: Missing, invalid or expired token
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error:
+              code: UNAUTHORIZED
+              message: Authentication required
+    ReportNotFound:
+      description: No report with this id
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error:
+              code: REPORT_NOT_FOUND
+              message: Report not found
+    TooManyRequests:
+      description: Too many requests, try again later
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error:
+              code: RATE_LIMITED
+              message: Too many requests, try again later
+    Busy:
+      description: The database was busy, try again
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error:
+              code: BUSY
+              message: The server is busy, try again in a moment
+  schemas:
+    Category:
+      type: string
+      enum: [SECURITY, HARASSMENT, CORRUPTION, TECHNICAL, OTHER]
+    Status:
+      type: string
+      enum: [SUBMITTED, UNDER_REVIEW, RESOLVED, DISMISSED]
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+            details:
+              type: array
+              items:
+                type: object
+                properties:
+                  field:
+                    type: string
+                  message:
+                    type: string
+    NewReport:
+      type: object
+      additionalProperties: false
+      required: [category, description]
+      properties:
+        category:
+          $ref: "#/components/schemas/Category"
+        description:
+          type: string
+          minLength: 10
+          maxLength: 5000
+          example: The backup server has been left open to the whole network for weeks.
+        evidenceUrl:
+          type: string
+          format: uri
+          maxLength: 2048
+          description: Optional http or https link. It is stored, never fetched.
+          example: https://example.com/evidence
+    ReportCreated:
+      type: object
+      properties:
+        caseCode:
+          type: string
+          pattern: "^WD(-[2-9A-HJKMNP-Z]{5}){4}$"
+          example: WD-K7M2P-9XQRB-4TNVD-HW3YF
+        status:
+          $ref: "#/components/schemas/Status"
+        message:
+          type: string
+          example: Save this case code. It cannot be recovered.
+    PublicUpdate:
+      type: object
+      properties:
+        status:
+          $ref: "#/components/schemas/Status"
+        message:
+          type: string
+          example: Report received
+        createdAt:
+          type: string
+          format: date-time
+    TrackedReport:
+      type: object
+      properties:
+        category:
+          $ref: "#/components/schemas/Category"
+        status:
+          $ref: "#/components/schemas/Status"
+        submittedAt:
+          type: string
+          format: date-time
+        updates:
+          type: array
+          items:
+            $ref: "#/components/schemas/PublicUpdate"
+    LoginRequest:
+      type: object
+      additionalProperties: false
+      required: [username, password]
+      properties:
+        username:
+          type: string
+          minLength: 1
+          maxLength: 64
+        password:
+          type: string
+          minLength: 1
+          maxLength: 128
+          format: password
+    LoginResponse:
+      type: object
+      properties:
+        token:
+          type: string
+          description: 'Send as "Authorization: Bearer <token>"'
+        expiresIn:
+          type: integer
+          description: Seconds until the token expires
+          example: 3600
+    ReportListItem:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        category:
+          $ref: "#/components/schemas/Category"
+        status:
+          $ref: "#/components/schemas/Status"
+        descriptionPreview:
+          type: string
+          description: First 120 characters of the description
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    ReportPage:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/ReportListItem"
+        page:
+          type: integer
+        limit:
+          type: integer
+        total:
+          type: integer
+    ModeratorUpdate:
+      type: object
+      properties:
+        status:
+          $ref: "#/components/schemas/Status"
+        message:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        by:
+          type: string
+          nullable: true
+          description: Username of the moderator, or null for the automatic first entry
+    ModeratorReport:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        category:
+          $ref: "#/components/schemas/Category"
+        description:
+          type: string
+        evidenceUrl:
+          type: string
+          nullable: true
+        status:
+          $ref: "#/components/schemas/Status"
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        updates:
+          type: array
+          items:
+            $ref: "#/components/schemas/ModeratorUpdate"
+    StatusChange:
+      type: object
+      additionalProperties: false
+      required: [status, message]
+      properties:
+        status:
+          $ref: "#/components/schemas/Status"
+        message:
+          type: string
+          minLength: 3
+          maxLength: 500
+          description: Shown to the reporter
+          example: Thanks, the infrastructure team is checking the backup jobs.
+    StatusChangeResult:
+      type: object
+      properties:
+        report:
+          type: object
+          properties:
+            id:
+              type: string
+              format: uuid
+            category:
+              $ref: "#/components/schemas/Category"
+            status:
+              $ref: "#/components/schemas/Status"
+            updatedAt:
+              type: string
+              format: date-time
+        update:
+          $ref: "#/components/schemas/PublicUpdate"
+    NoteRequest:
+      type: object
+      additionalProperties: false
+      required: [message]
+      properties:
+        message:
+          type: string
+          minLength: 3
+          maxLength: 500
+          description: Shown to the reporter
+    NoteResult:
+      type: object
+      properties:
+        update:
+          $ref: "#/components/schemas/PublicUpdate"
