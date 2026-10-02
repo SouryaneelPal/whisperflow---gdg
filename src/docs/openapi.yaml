@@ -24,6 +24,9 @@ info:
     `INTERNAL_ERROR` (500, with no internal details).
 servers:
   - url: /
+    description: This server
+  - url: http://localhost:4000
+    description: Local development
 tags:
   - name: Reporter
     description: Public endpoints, no account needed.

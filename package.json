@@ -48,5 +48,8 @@
     "bcrypt@6.0.0": true,
     "esbuild@0.28.2": true,
     "@scarf/scarf": false
+  },
+  "engines": {
+    "node": ">=26"
   }
 }
