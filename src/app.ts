@@ -21,6 +21,10 @@ app.get('/health', (_req, res) => {
   res.json({ status: 'ok' });
 });
 
+app.get('/', (_req, res) => {
+  res.redirect(302, '/docs/');
+});
+
 app.use('/docs', docsRoutes);
 
 // Reports and tracking data must never be kept by browsers or proxies.

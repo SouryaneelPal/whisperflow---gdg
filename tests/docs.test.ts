@@ -28,3 +28,10 @@ it('serves Swagger UI with a spec that documents every operation', async () => {
     ].sort(),
   );
 });
+
+it('redirects the root URL to the docs', async () => {
+  const res = await api.get('/');
+
+  expect(res.status).toBe(302);
+  expect(res.headers.location).toBe('/docs/');
+});
