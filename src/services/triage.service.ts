@@ -1,9 +1,8 @@
 import { CATEGORIES } from '../domain/statusWorkflow';
 import model from '../ml/model.json';
 
-// Inference for the model trained by ml/train.py. Every step mirrors scikit-learn's
-// TfidfVectorizer and LogisticRegression.predict_proba, so results match the Python
-// side (checked by tests/triage.test.ts). Suggestions are computed on read and never stored.
+// Mirrors scikit-learn's TfidfVectorizer and predict_proba so results match ml/train.py
+// (checked by tests/triage.test.ts). Suggestions are computed on read and never stored.
 
 // A model trained on other labels would suggest values the rest of the API does not know.
 const sameLabels =
