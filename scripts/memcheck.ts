@@ -16,7 +16,7 @@ const REQUESTS = 50;
 const PAGE_SIZE = 20;
 const PASSWORD = crypto.randomBytes(16).toString('hex');
 
-type Run = { peakMb: number; readyMb: number; requestMs: number; perReportMs: number; models: Set<string> };
+type Run = { peakMb: number; readyMb: number; firstMs: number; repeatMs: number; models: Set<string> };
 
 function removeDatabase() {
   for (const file of [DB_FILE, `${DB_FILE}-journal`]) fs.rmSync(file, { force: true });
@@ -97,19 +97,24 @@ async function measure(embeddings: boolean): Promise<Run> {
     const { token } = (await login.json()) as { token: string };
 
     const models = new Set<string>();
-    const started = performance.now();
+    const pages = REPORTS / PAGE_SIZE;
+    const first: number[] = [];
+    const repeat: number[] = [];
     for (let i = 0; i < REQUESTS; i++) {
-      const page = (i % (REPORTS / PAGE_SIZE)) + 1;
+      const page = (i % pages) + 1;
+      const started = performance.now();
       const res = await fetch(`${base}/api/moderator/reports?limit=${PAGE_SIZE}&page=${page}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       const body = (await res.json()) as { data: { triage: { model: string } }[] };
+      // The first pass over the pages embeds every report; later passes hit the cache.
+      (i < pages ? first : repeat).push(performance.now() - started);
       for (const report of body.data) models.add(report.triage.model);
     }
-    const requestMs = (performance.now() - started) / REQUESTS;
     peakMb = Math.max(peakMb, rssMb(pid));
 
-    return { peakMb, readyMb, requestMs, perReportMs: requestMs / PAGE_SIZE, models };
+    const average = (times: number[]) => times.reduce((sum, t) => sum + t, 0) / times.length;
+    return { peakMb, readyMb, firstMs: average(first), repeatMs: average(repeat), models };
   } finally {
     clearInterval(sampler);
     server.kill('SIGTERM');
@@ -123,8 +128,8 @@ function describe(name: string, run: Run) {
     `  models used:            ${[...run.models].join(', ')}`,
     `  RSS when ready:         ${run.readyMb.toFixed(0)} MB`,
     `  peak RSS:               ${run.peakMb.toFixed(0)} MB`,
-    `  list request (avg):     ${run.requestMs.toFixed(1)} ms for ${PAGE_SIZE} reports`,
-    `  per report (avg):       ${run.perReportMs.toFixed(2)} ms, including database and HTTP`,
+    `  first list request:     ${run.firstMs.toFixed(1)} ms avg for ${PAGE_SIZE} reports (${REPORTS / PAGE_SIZE} requests)`,
+    `  repeat list request:    ${run.repeatMs.toFixed(1)} ms avg (${REQUESTS - REPORTS / PAGE_SIZE} requests)`,
   ].join('\n');
 }
 
@@ -139,8 +144,8 @@ async function main() {
     console.log(`${REPORTS} seeded reports, ${REQUESTS} list requests of ${PAGE_SIZE}, NODE_ENV=production\n`);
     console.log(describe('Embeddings (ML_EMBEDDINGS=on)', withEmbeddings));
     console.log(describe('TF-IDF only (ML_EMBEDDINGS=off)', withTfidf));
-    const triageMs = withEmbeddings.perReportMs - withTfidf.perReportMs;
-    console.log(`\nEmbedding cost per report over TF-IDF: ${triageMs.toFixed(2)} ms`);
+    const triageMs = (withEmbeddings.firstMs - withTfidf.firstMs) / PAGE_SIZE;
+    console.log(`\nEmbedding cost per uncached report over TF-IDF: ${triageMs.toFixed(2)} ms`);
 
     if (!withEmbeddings.models.has('embeddings') || withEmbeddings.models.size !== 1) {
       throw new Error('the embeddings run did not use the embedding model for every report');

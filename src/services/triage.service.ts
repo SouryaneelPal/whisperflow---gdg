@@ -1,3 +1,4 @@
+import { env } from '../config/env';
 import { CATEGORIES } from '../domain/statusWorkflow';
 import head from '../ml/embedding-head.json';
 import model from '../ml/model.json';
@@ -26,7 +27,14 @@ checkLabels(head.classes, 'src/ml/embedding-head.json');
 
 const vocabulary = new Map(model.vocabulary.map((term, index) => [term, index]));
 
+export const CACHE_SIZE = 500;
+
 let embedder: Embedder | null = null;
+let lastEmbed: Promise<unknown> = Promise.resolve();
+
+// Embedding results by report id. Report text never changes after submission, so a result
+// stays valid; only the suggestion is kept, never the text, and only in memory.
+const cache = new Map<string, Suggestion>();
 
 // scikit-learn lowercases, then takes runs of two or more word characters (\b\w\w+\b).
 function tokenize(text: string) {
@@ -89,7 +97,7 @@ function toSuggestion(
   };
 }
 
-function suggestWithTfidf(text: string) {
+export function suggestWithTfidf(text: string) {
   const x = vectorize(text);
   const scores = model.intercept.map((bias, k) => {
     let score = bias;
@@ -112,6 +120,7 @@ export function classifyEmbedding(vector: number[]) {
 // Loads in the background. Until it is ready, or if it fails, suggestions come from TF-IDF.
 export function startEmbeddings(load: () => Promise<Embedder> = loadEmbedder) {
   embedder = null;
+  cache.clear();
 
   if (head.embeddingModel !== EMBEDDING_MODEL) {
     logger.warn('Triage model: tfidf (embedding-head.json was trained on another embedding model)');
@@ -129,14 +138,48 @@ export function startEmbeddings(load: () => Promise<Embedder> = loadEmbedder) {
   );
 }
 
-export async function suggestTriage(text: string): Promise<Suggestion> {
-  if (!embedder) return suggestWithTfidf(text);
+function remember(id: string, suggestion: Suggestion) {
+  cache.delete(id);
+  cache.set(id, suggestion);
+  // Map keeps insertion order, so the first key is the least recently used.
+  if (cache.size > CACHE_SIZE) cache.delete(cache.keys().next().value!);
+}
+
+// One embedding at a time across all requests: on a small CPU, parallel ONNX runs fight over
+// the same cores. Resolves to null if the request's time budget ran out while waiting.
+function embedInTurn(embed: Embedder, text: string, deadline: number) {
+  const turn = lastEmbed.then(() => (performance.now() < deadline ? embed(text) : null));
+  lastEmbed = turn.catch(() => undefined);
+  return turn;
+}
+
+async function suggestOne(report: { id: string; description: string }, deadline: number) {
+  const cached = cache.get(report.id);
+  if (cached) {
+    remember(report.id, cached);
+    return cached;
+  }
+  if (!embedder) return suggestWithTfidf(report.description);
 
   try {
-    return classifyEmbedding(await embedder(text));
+    const vector = await embedInTurn(embedder, report.description, deadline);
+    if (!vector) return suggestWithTfidf(report.description);
+
+    const suggestion = classifyEmbedding(vector);
+    remember(report.id, suggestion);
+    return suggestion;
   } catch (err) {
     // Only the error name is logged; inference errors could otherwise quote report text.
     logger.warn(`Embedding failed, using TF-IDF: ${err instanceof Error ? err.name : 'unknown error'}`);
-    return suggestWithTfidf(text);
+    return suggestWithTfidf(report.description);
   }
+}
+
+// Reports are handled one by one. Once the budget is spent, the rest of the response uses
+// TF-IDF, so a slow CPU makes suggestions worse rather than the page slower.
+export async function triageReports(reports: { id: string; description: string }[], budgetMs = env.TRIAGE_BUDGET_MS) {
+  const deadline = performance.now() + budgetMs;
+  const suggestions: Suggestion[] = [];
+  for (const report of reports) suggestions.push(await suggestOne(report, deadline));
+  return suggestions;
 }

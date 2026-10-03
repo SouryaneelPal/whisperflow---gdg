@@ -3,7 +3,13 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import head from '../src/ml/embedding-head.json';
 import model from '../src/ml/model.json';
-import { classifyEmbedding, startEmbeddings, suggestTriage } from '../src/services/triage.service';
+import {
+  CACHE_SIZE,
+  classifyEmbedding,
+  startEmbeddings,
+  suggestWithTfidf,
+  triageReports,
+} from '../src/services/triage.service';
 import { logger } from '../src/utils/logger';
 import { api, createModerator, loginAs, submitReport } from './helpers';
 
@@ -20,12 +26,21 @@ const embeddingFixtures: EmbeddingFixture[] = JSON.parse(
 
 const neverReady = () => new Promise<never>(() => {});
 
+async function triageOne(description: string, id = 'report-1') {
+  const [suggestion] = await triageReports([{ id, description }]);
+  return suggestion;
+}
+
+function reportsNamed(count: number, prefix = 'r') {
+  return Array.from({ length: count }, (_, i) => ({ id: `${prefix}${i}`, description: `Report number ${i}` }));
+}
+
 describe('TF-IDF model', () => {
-  it('matches the scikit-learn predictions for the parity texts', async () => {
+  it('matches the scikit-learn predictions for the parity texts', () => {
     expect(fixtures).toHaveLength(8);
 
     for (const fixture of fixtures) {
-      const result = await suggestTriage(fixture.text);
+      const result = suggestWithTfidf(fixture.text);
 
       expect(result.suggestedCategory, fixture.text).toBe(fixture.suggestedCategory);
       expect(Math.abs(result.confidence - fixture.confidence), fixture.text).toBeLessThan(0.01);
@@ -37,9 +52,8 @@ describe('TF-IDF model', () => {
     expect(fixtures.some((f) => f.suggestedCategory !== null)).toBe(true);
   });
 
-  it('withholds the category below the confidence threshold but keeps the evidence', async () => {
-    const text = 'A minor typo on the notice board, already fixed.';
-    const result = await suggestTriage(text);
+  it('withholds the category below the confidence threshold but keeps the evidence', () => {
+    const result = suggestWithTfidf('A minor typo on the notice board, already fixed.');
 
     expect(result.confidence).toBeLessThan(model.threshold);
     expect(result).toEqual({
@@ -52,8 +66,8 @@ describe('TF-IDF model', () => {
     expect(result.topTerms.length).toBeGreaterThan(0);
   });
 
-  it('names up to three terms from the text that pushed toward the top category', async () => {
-    const result = await suggestTriage('The purchasing lead takes a cut from the vendor on every order.');
+  it('names up to three terms from the text that pushed toward the top category', () => {
+    const result = suggestWithTfidf('The purchasing lead takes a cut from the vendor on every order.');
 
     expect(result.suggestedCategory).toBe('CORRUPTION');
     expect(result.reason).toBeNull();
@@ -64,8 +78,8 @@ describe('TF-IDF model', () => {
     }
   });
 
-  it('returns no top terms for text with no known words', async () => {
-    expect((await suggestTriage('zzqx')).topTerms).toEqual([]);
+  it('returns no top terms for text with no known words', () => {
+    expect(suggestWithTfidf('zzqx').topTerms).toEqual([]);
   });
 });
 
@@ -101,7 +115,7 @@ describe('choosing a model', () => {
   it('uses TF-IDF while the embedding model is still loading', async () => {
     startEmbeddings(neverReady);
 
-    expect((await suggestTriage('The vendor pays the purchasing lead.')).model).toBe('tfidf');
+    expect((await triageOne('The vendor pays the purchasing lead.')).model).toBe('tfidf');
   });
 
   it('falls back to TF-IDF when the embedding model fails to load', async () => {
@@ -109,7 +123,7 @@ describe('choosing a model', () => {
 
     await startEmbeddings(() => Promise.reject(new Error('model files missing')));
 
-    expect((await suggestTriage('The vendor pays the purchasing lead.')).model).toBe('tfidf');
+    expect((await triageOne('The vendor pays the purchasing lead.')).model).toBe('tfidf');
     expect(warn).toHaveBeenCalledWith('Triage model: tfidf (embedding model unavailable: model files missing)');
   });
 
@@ -118,7 +132,7 @@ describe('choosing a model', () => {
 
     await startEmbeddings(async () => async () => vector());
 
-    expect(await suggestTriage('any text')).toEqual(classifyEmbedding(vector()));
+    expect(await triageOne('any text')).toEqual(classifyEmbedding(vector()));
   });
 
   it('falls back to TF-IDF for one report if embedding it fails, without logging its text', async () => {
@@ -128,11 +142,96 @@ describe('choosing a model', () => {
       throw new TypeError(`cannot embed ${text}`);
     });
 
-    const result = await suggestTriage('Secret report text');
+    const result = await triageOne('Secret report text');
 
     expect(result.model).toBe('tfidf');
     expect(warn).toHaveBeenCalledWith('Embedding failed, using TF-IDF: TypeError');
     expect(JSON.stringify(warn.mock.calls)).not.toContain('Secret report text');
+  });
+});
+
+describe('running embeddings on a small CPU', () => {
+  beforeEach(() => {
+    vi.spyOn(logger, 'info').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    startEmbeddings(neverReady);
+    vi.restoreAllMocks();
+  });
+
+  // A fake embedder that records how many calls run at once and how many there were.
+  function countingEmbedder(delayMs = 5) {
+    const stats = { calls: 0, running: 0, mostAtOnce: 0 };
+    const embed = async () => {
+      stats.calls++;
+      stats.running++;
+      stats.mostAtOnce = Math.max(stats.mostAtOnce, stats.running);
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+      stats.running--;
+      return embeddingFixtures[0].vector;
+    };
+    return { stats, embed };
+  }
+
+  it('embeds one report at a time, even across overlapping requests', async () => {
+    const { stats, embed } = countingEmbedder();
+    await startEmbeddings(async () => embed);
+
+    await Promise.all([triageReports(reportsNamed(5, 'a')), triageReports(reportsNamed(5, 'b'))]);
+
+    expect(stats.calls).toBe(10);
+    expect(stats.mostAtOnce).toBe(1);
+  });
+
+  it('returns a cached result for a report it has already embedded', async () => {
+    const { stats, embed } = countingEmbedder();
+    await startEmbeddings(async () => embed);
+
+    const first = await triageOne('Some report', 'same-id');
+    const second = await triageOne('Some report', 'same-id');
+
+    expect(stats.calls).toBe(1);
+    expect(second).toEqual(first);
+    expect(second.model).toBe('embeddings');
+  });
+
+  it(`keeps at most ${CACHE_SIZE} results and evicts the least recently used`, async () => {
+    const { stats, embed } = countingEmbedder(0);
+    await startEmbeddings(async () => embed);
+    const reports = reportsNamed(CACHE_SIZE + 1);
+
+    await triageReports(reports.slice(0, CACHE_SIZE), 60_000);
+    await triageOne('Report number 0', 'r0');
+    await triageReports([reports[CACHE_SIZE]], 60_000);
+    stats.calls = 0;
+
+    await triageOne('Report number 0', 'r0');
+    expect(stats.calls).toBe(0);
+    await triageOne('Report number 1', 'r1');
+    expect(stats.calls).toBe(1);
+  });
+
+  it('uses TF-IDF for the rest of a response once the time budget is spent', async () => {
+    const { stats, embed } = countingEmbedder(40);
+    await startEmbeddings(async () => embed);
+
+    const results = await triageReports(reportsNamed(6), 100);
+    const models = results.map((r) => r.model);
+
+    expect(models[0]).toBe('embeddings');
+    expect(models.at(-1)).toBe('tfidf');
+    expect(models.indexOf('tfidf')).toBe(stats.calls);
+    expect(models.slice(models.indexOf('tfidf')).every((m) => m === 'tfidf')).toBe(true);
+  });
+
+  it('does not cache TF-IDF fallbacks, so a report gets embedded once there is time', async () => {
+    const { stats, embed } = countingEmbedder();
+    await startEmbeddings(async () => embed);
+
+    expect((await triageReports([{ id: 'late', description: 'Some report' }], 0))[0].model).toBe('tfidf');
+    expect((await triageOne('Some report', 'late')).model).toBe('embeddings');
+    expect(stats.calls).toBe(1);
   });
 });
 
