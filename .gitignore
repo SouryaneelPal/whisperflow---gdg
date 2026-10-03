@@ -8,3 +8,5 @@ CLAUDE.md
 .claude/
 test.db
 .DS_Store
+ml/.venv
+ml/__pycache__

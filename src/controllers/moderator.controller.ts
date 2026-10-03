@@ -2,6 +2,7 @@ import { Report, StatusUpdate } from '@prisma/client';
 import { Request, Response } from 'express';
 import { authenticate } from '../services/moderator.service';
 import { addNote, changeStatus, findReport, findReports } from '../services/report.service';
+import { suggestTriage } from '../services/triage.service';
 import { AppError } from '../utils/AppError';
 import { ListQuery } from '../validators/moderator.schema';
 
@@ -23,6 +24,7 @@ function toSummary(report: SummaryRow) {
     descriptionPreview: report.description.slice(0, 120),
     createdAt: report.createdAt,
     updatedAt: report.updatedAt,
+    triage: suggestTriage(report.description),
   };
 }
 
@@ -36,6 +38,7 @@ function toDetail(report: DetailRow) {
     createdAt: report.createdAt,
     updatedAt: report.updatedAt,
     updates: report.updates.map((update) => ({ ...toUpdate(update), by: update.moderator?.username ?? null })),
+    triage: suggestTriage(report.description),
   };
 }
 

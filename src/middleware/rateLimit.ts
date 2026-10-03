@@ -23,4 +23,5 @@ export function createLimiter(windowMs: number, limit: number, skipInTests = tru
 
 export const submitLimiter = createLimiter(60 * 60 * 1000, env.SUBMIT_LIMIT_PER_HOUR);
 export const trackLimiter = createLimiter(15 * 60 * 1000, env.TRACK_LIMIT_PER_15_MIN);
+export const checkLimiter = createLimiter(15 * 60 * 1000, 60);
 export const loginLimiter = createLimiter(15 * 60 * 1000, 5);

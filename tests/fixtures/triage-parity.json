@@ -1,0 +1,58 @@
+[
+  {
+    "text": "Someone keeps forwarding confidential client files to a personal email address.",
+    "category": "SECURITY",
+    "confidence": 0.2586050664359579,
+    "urgency": "HIGH",
+    "urgencyConfidence": 0.40417147445512175
+  },
+  {
+    "text": "My manager mocks my accent in every meeting and the team laughs along.",
+    "category": "HARASSMENT",
+    "confidence": 0.4869904833350793,
+    "urgency": "MEDIUM",
+    "urgencyConfidence": 0.5180485904399916
+  },
+  {
+    "text": "The purchasing lead takes a cut from the vendor on every order.",
+    "category": "CORRUPTION",
+    "confidence": 0.32901678946510393,
+    "urgency": "MEDIUM",
+    "urgencyConfidence": 0.42515929006482933
+  },
+  {
+    "text": "Backups have failed for two weeks and nobody checks the alerts.",
+    "category": "TECHNICAL",
+    "confidence": 0.3805408946791324,
+    "urgency": "HIGH",
+    "urgencyConfidence": 0.4379897900933789
+  },
+  {
+    "text": "The stairs near the loading dock have no railing and someone will fall.",
+    "category": "OTHER",
+    "confidence": 0.30116692385426586,
+    "urgency": "MEDIUM",
+    "urgencyConfidence": 0.4699807075643314
+  },
+  {
+    "text": "A minor typo on the notice board, already fixed.",
+    "category": "TECHNICAL",
+    "confidence": 0.2511760991377785,
+    "urgency": "MEDIUM",
+    "urgencyConfidence": 0.41942880684366063
+  },
+  {
+    "text": "Hello there.",
+    "category": "OTHER",
+    "confidence": 0.29479580890819806,
+    "urgency": "MEDIUM",
+    "urgencyConfidence": 0.3479960560825979
+  },
+  {
+    "text": "Le caf\u00e9 du bureau est tr\u00e8s sale, the canteen food made people sick.",
+    "category": "OTHER",
+    "confidence": 0.30080419167366845,
+    "urgency": "HIGH",
+    "urgencyConfidence": 0.39423566391882214
+  }
+]

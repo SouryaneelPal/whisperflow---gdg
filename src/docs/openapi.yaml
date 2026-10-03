@@ -112,6 +112,32 @@ paths:
                   message: No report matches this case code
         "429":
           $ref: "#/components/responses/TooManyRequests"
+  /api/reports/check:
+    post:
+      tags: [Reporter]
+      summary: Check a draft report for details that could identify the reporter
+      description: >
+        Looks for email addresses, phone numbers, names, social media handles or
+        profile links, and ID-like numbers. It only warns: the text is not stored
+        or logged, warnings never quote it back, and POST /api/reports never
+        blocks a report because of these checks.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LeakCheckRequest"
+      responses:
+        "200":
+          description: Warnings, empty if nothing was found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LeakCheckResult"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /api/moderator/login:
     post:
       tags: [Moderator]
@@ -518,6 +544,8 @@ components:
         updatedAt:
           type: string
           format: date-time
+        triage:
+          $ref: "#/components/schemas/Triage"
     ReportPage:
       type: object
       properties:
@@ -570,6 +598,61 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ModeratorUpdate"
+        triage:
+          $ref: "#/components/schemas/Triage"
+    Triage:
+      type: object
+      description: >
+        Suggestion from a small local model, computed when the report is read and
+        never stored. Moderators only; reporters never see it.
+      properties:
+        suggestedCategory:
+          $ref: "#/components/schemas/Category"
+        confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+          example: 0.62
+        suggestedUrgency:
+          type: string
+          enum: [LOW, MEDIUM, HIGH]
+        urgencyConfidence:
+          type: number
+          minimum: 0
+          maximum: 1
+          example: 0.48
+        topTerms:
+          type: array
+          maxItems: 3
+          description: Words or word pairs from the text that pushed hardest toward the suggested category
+          items:
+            type: string
+          example: [vendor, cut, purchasing]
+    LeakCheckRequest:
+      type: object
+      additionalProperties: false
+      required: [description]
+      properties:
+        description:
+          type: string
+          maxLength: 5000
+          example: My name is Priya and you can reach me on 98765 43210.
+    LeakWarning:
+      type: object
+      properties:
+        type:
+          type: string
+          enum: [EMAIL, PHONE, NAME, SOCIAL_MEDIA, ID_NUMBER]
+        message:
+          type: string
+          example: This looks like a phone number. Remove it if you want to stay anonymous.
+    LeakCheckResult:
+      type: object
+      properties:
+        warnings:
+          type: array
+          items:
+            $ref: "#/components/schemas/LeakWarning"
     StatusChange:
       type: object
       additionalProperties: false
