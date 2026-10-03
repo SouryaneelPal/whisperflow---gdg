@@ -5,6 +5,7 @@ Run from the repo root with the local venv:
     ml/.venv/bin/python ml/embeddings_experiment.py
 """
 
+import json
 import platform
 import resource
 import statistics
@@ -30,6 +31,7 @@ from train import (
 ROOT = Path(__file__).resolve().parent.parent
 RESULTS = ROOT / "ml" / "experiments.md"
 CACHE = ROOT / "ml" / ".cache"
+ONNX_EMBEDDINGS = CACHE / "embeddings.json"
 MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
 MIN_DF = 1  # what train.py ships with
 LATENCY_RUNS = 50
@@ -44,7 +46,36 @@ def peak_rss_mb():
 
 def folder_mb(path):
     # The Hugging Face cache links snapshot files to blobs; count each real file once.
-    return sum(f.stat().st_size for f in path.rglob("*") if f.is_file() and not f.is_symlink()) / 1024 / 1024
+    # embeddings.json is our own output, not part of the download.
+    files = [f for f in path.rglob("*") if f.is_file() and not f.is_symlink() and f != ONNX_EMBEDDINGS]
+    return sum(f.stat().st_size for f in files) / 1024 / 1024
+
+
+def onnx_comparison(texts, categories, torch_vectors):
+    if not ONNX_EMBEDDINGS.exists():
+        return "Not run: `ml/.cache/embeddings.json` is missing. Run `npm run ml:embed` first."
+
+    data = json.loads(ONNX_EMBEDDINGS.read_text(encoding="utf-8"))
+    if [row["text"] for row in data["rows"]] != texts:
+        return "Not run: `ml/.cache/embeddings.json` does not match dataset.csv. Rerun `npm run ml:embed`."
+
+    onnx_vectors = np.array([row["vector"] for row in data["rows"]])
+    # Both sets are L2-normalised, so the row-wise dot product is the cosine similarity.
+    cosine = (onnx_vectors * torch_vectors).sum(axis=1)
+    onnx = cross_validate(onnx_vectors, categories, lambda: LogisticRegression(max_iter=2000))
+    onnx_rows = threshold_table(onnx)
+
+    return f"""The server uses the quantised ONNX export of the same model through transformers.js
+(`{data["model"]}`, int8). These are its vectors for the same {len(texts)} reports, from
+`npm run ml:embed`, scored the same way.
+
+| embeddings | accuracy | macro F1 | threshold by the 75% rule |
+|---|---|---|---|
+{{torch_row}}
+{summary_row("quantised ONNX (transformers.js)", onnx, choose_threshold(onnx_rows), onnx_rows)}
+
+Cosine similarity between the torch and ONNX vector for each report: mean {cosine.mean():.4f},
+lowest {cosine.min():.4f}."""
 
 
 def median_ms(predict):
@@ -115,6 +146,10 @@ def main():
     import torch
 
     torch_mb = folder_mb(Path(torch.__file__).parent)
+    onnx_section = onnx_comparison(texts, categories, embeddings).replace(
+        "{torch_row}",
+        summary_row("torch (sentence-transformers)", embedded, embedded_threshold, embedded_rows),
+    )
 
     (tfidf_f1, tfidf_sd), (embedded_f1, embedded_sd) = tfidf["macro_f1"], embedded["macro_f1"]
     beats = embedded_f1 - tfidf_f1 > tfidf_sd + embedded_sd
@@ -123,7 +158,9 @@ def main():
     results = f"""# Embeddings experiment
 
 Offline comparison only; nothing here changes the shipped model. Reproduce with
-`ml/.venv/bin/python ml/embeddings_experiment.py` after installing `ml/requirements.txt`.
+`ml/.venv/bin/python ml/embeddings_experiment.py` after
+`ml/.venv/bin/pip install -r ml/requirements-experiment.txt` (torch and sentence-transformers,
+about 1 GB). The shipped models need only `ml/requirements.txt`.
 
 Same {len(texts)} reports, same stratified {FOLDS}-fold split (`random_state={RANDOM_STATE}`) and the
 same threshold rule as `train.py`: the lowest threshold where suggestions are right at least
@@ -154,6 +191,10 @@ TF-IDF:
 Embeddings:
 
 {matrix_table(embedded)}
+
+## Quantised ONNX versus torch
+
+{onnx_section}
 
 ## Cost
 

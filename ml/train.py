@@ -1,9 +1,11 @@
 """Train the moderator category suggestion model and export it for the TypeScript service.
 
 Run from the repo root with the local venv:
-    ml/.venv/bin/python ml/train.py
+    ml/.venv/bin/python ml/train.py               # TF-IDF only
+    ml/.venv/bin/python ml/train.py --embeddings  # also the embedding head (run npm run ml:embed first)
 """
 
+import argparse
 import csv
 import json
 from pathlib import Path
@@ -21,6 +23,9 @@ DATASET = ROOT / "ml" / "dataset.csv"
 METRICS = ROOT / "ml" / "metrics.md"
 MODEL = ROOT / "src" / "ml" / "model.json"
 PARITY = ROOT / "tests" / "fixtures" / "triage-parity.json"
+EMBEDDINGS = ROOT / "ml" / ".cache" / "embeddings.json"
+EMBEDDING_HEAD = ROOT / "src" / "ml" / "embedding-head.json"
+EMBEDDING_PARITY = ROOT / "tests" / "fixtures" / "embedding-parity.json"
 
 RANDOM_STATE = 42
 FOLDS = 5
@@ -29,7 +34,7 @@ FOLDS = 5
 # and the threshold must still leave enough reports with a suggestion to be measured.
 TARGET_ACCURACY = 0.75
 MIN_SUGGESTED = 30
-THRESHOLDS = [round(0.20 + 0.025 * i, 3) for i in range(13)]
+THRESHOLDS = [round(0.20 + 0.025 * i, 3) for i in range(21)]
 
 # Fixed texts whose predictions the TypeScript port must reproduce. They include a text
 # with no known words (below the threshold) and one with accented characters.
@@ -43,6 +48,10 @@ PARITY_TEXTS = [
     "Hello there.",
     "Le café du bureau est très sale, the canteen food made people sick.",
 ]
+
+# Dataset rows whose embeddings are used for the embedding head parity test, one or more per
+# category. A zero vector is added as well, which only the intercepts score.
+PARITY_ROWS = [0, 60, 120, 180, 240, 299, 150]
 
 
 def load():
@@ -123,6 +132,15 @@ def threshold_table(result):
     return rows
 
 
+def threshold_lines(rows, threshold):
+    lines = ["| threshold | reports with a suggestion | share | accuracy on those |", "|---|---|---|---|"]
+    for t, count, share, accuracy in rows:
+        mark = " (chosen)" if t == threshold else ""
+        shown = "n/a" if count == 0 else f"{accuracy:.3f}"
+        lines.append(f"| {t:.3f}{mark} | {count} | {share:.0%} | {shown} |")
+    return "\n".join(lines)
+
+
 def choose_threshold(rows):
     # The lowest threshold that meets the accuracy target keeps the most suggestions.
     for threshold, count, _, accuracy in rows:
@@ -165,7 +183,86 @@ def export(texts, categories, min_df, threshold):
     return len(vectorizer.vocabulary_)
 
 
+def load_embeddings(texts):
+    if not EMBEDDINGS.exists():
+        raise SystemExit("ml/.cache/embeddings.json is missing; run npm run ml:embed first.")
+    data = json.loads(EMBEDDINGS.read_text(encoding="utf-8"))
+    if [row["text"] for row in data["rows"]] != texts:
+        raise SystemExit("ml/.cache/embeddings.json does not match dataset.csv; rerun npm run ml:embed.")
+    return data["model"], np.array([row["vector"] for row in data["rows"]])
+
+
+def export_embedding_head(embedding_model, vectors, categories, threshold):
+    model = LogisticRegression(max_iter=2000).fit(vectors, categories)
+    assert len(model.classes_) > 2
+
+    EMBEDDING_HEAD.write_text(json.dumps({
+        "embeddingModel": embedding_model,
+        "classes": [str(c) for c in model.classes_],
+        "coef": model.coef_.tolist(),
+        "intercept": model.intercept_.tolist(),
+        "threshold": threshold,
+    }), encoding="utf-8")
+
+    parity_vectors = [vectors[i] for i in PARITY_ROWS] + [np.zeros(vectors.shape[1])]
+    fixtures = []
+    for vector, probabilities in zip(parity_vectors, model.predict_proba(np.array(parity_vectors))):
+        best = probabilities.argmax()
+        fixtures.append({
+            "vector": vector.tolist(),
+            "topCategory": str(model.classes_[best]),
+            "confidence": float(probabilities[best]),
+            "suggestedCategory": str(model.classes_[best]) if probabilities[best] >= threshold else None,
+        })
+    EMBEDDING_PARITY.write_text(json.dumps(fixtures) + "\n", encoding="utf-8")
+
+
+def embedding_section(texts, categories, category, category_baseline):
+    embedding_model, vectors = load_embeddings(texts)
+    result = cross_validate(vectors, categories, lambda: LogisticRegression(max_iter=2000))
+    rows = threshold_table(result)
+    threshold = choose_threshold(rows)
+    if threshold is None:
+        raise SystemExit("No embedding threshold reaches the accuracy target.")
+    chosen = next(row for row in rows if row[0] == threshold)
+
+    export_embedding_head(embedding_model, vectors, categories, threshold)
+    size_kb = EMBEDDING_HEAD.stat().st_size / 1024
+    floor_note = (
+        " This is the lowest value in the grid, one in five classes, so the embedding head never"
+        " withholds a suggestion: it already meets the accuracy target for every report."
+        if threshold == THRESHOLDS[0]
+        else ""
+    )
+
+    return f"""## Embeddings (shipped, with TF-IDF as fallback)
+
+`{embedding_model}`, quantised ONNX, mean pooling and L2 normalisation, embedded by the same
+code the server runs (`npm run ml:embed`). Logistic regression on the 384-dimensional vectors,
+same folds, baseline and threshold rule as above.
+
+| model | accuracy | macro F1 |
+|---|---|---|
+{score_line("majority-class baseline", category_baseline)}
+{score_line("TF-IDF (fallback)", category)}
+{score_line("ONNX embeddings", result)}
+
+{matrix_table(result)}
+
+{threshold_lines(rows, threshold)}
+
+**Chosen: {threshold:.3f}.** At this threshold {chosen[2]:.0%} of reports get a suggestion and
+{chosen[3]:.1%} of those are right.{floor_note}
+
+`src/ml/embedding-head.json`: {size_kb:.0f} KB.
+"""
+
+
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--embeddings", action="store_true", help="also train and export the embedding head")
+    args = parser.parse_args()
+
     texts, categories, urgencies = load()
 
     by_min_df = {min_df: cross_validate(texts, categories, lambda: make_pipeline_for(min_df)) for min_df in (1, 2)}
@@ -185,14 +282,9 @@ def main():
     terms = export(texts, categories, min_df, threshold)
     size_kb = MODEL.stat().st_size / 1024
 
-    threshold_lines = [
-        "| threshold | reports with a suggestion | share | accuracy on those |",
-        "|---|---|---|---|",
-        *[
-            f"| {t:.3f}{' (chosen)' if t == threshold else ''} | {count} | {share:.0%} | {acc:.3f} |"
-            for t, count, share, acc in rows
-        ],
-    ]
+    embeddings = (
+        embedding_section(texts, categories, category, category_baseline) if args.embeddings else ""
+    )
 
     metrics = f"""# Triage model metrics
 
@@ -201,10 +293,13 @@ def main():
 ```
 python3 -m venv ml/.venv
 ml/.venv/bin/pip install -r ml/requirements.txt
-ml/.venv/bin/python ml/train.py
+npm run ml:embed
+ml/.venv/bin/python ml/train.py --embeddings
 ```
 
-This rewrites this file, `src/ml/model.json` and `tests/fixtures/triage-parity.json`.
+This rewrites this file, `src/ml/model.json`, `src/ml/embedding-head.json` and the parity
+fixtures in `tests/fixtures/`. Without `--embeddings` only the TF-IDF parts are rebuilt and
+the embeddings section below is left out.
 
 ## Setup
 
@@ -214,7 +309,7 @@ This rewrites this file, `src/ml/model.json` and `tests/fixtures/triage-parity.j
   Scores are mean ± standard deviation across folds; confusion matrices are summed across folds.
 - The shipped model is retrained on all reports after evaluation.
 
-## Category
+## Category (TF-IDF)
 
 | model | accuracy | macro F1 |
 |---|---|---|
@@ -233,7 +328,7 @@ Summed confusion matrix (min_df={min_df}):
 Measured on the out-of-fold predictions above only. A report gets a suggestion when the
 top-class probability is at least the threshold; below it the API returns no category.
 
-{chr(10).join(threshold_lines)}
+{threshold_lines(rows, threshold)}
 
 **Chosen: {threshold:.3f}.** It is the lowest threshold where suggestions are right at least
 {TARGET_ACCURACY:.0%} of the time with at least {MIN_SUGGESTED} reports measured. At this
@@ -244,6 +339,7 @@ the probability and top terms, so moderators can see why no category was suggest
 Probabilities from the shipped model can run slightly higher than in cross-validation,
 because it is trained on all {len(texts)} reports instead of four fifths of them.
 
+{embeddings}
 ## Urgency (tried and rejected)
 
 | model | accuracy | macro F1 |

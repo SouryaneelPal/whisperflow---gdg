@@ -16,7 +16,7 @@ function toUpdate(update: UpdateRow) {
   return { status: update.status, message: update.message, createdAt: update.createdAt };
 }
 
-function toSummary(report: SummaryRow) {
+async function toSummary(report: SummaryRow) {
   return {
     id: report.id,
     category: report.category,
@@ -24,11 +24,11 @@ function toSummary(report: SummaryRow) {
     descriptionPreview: report.description.slice(0, 120),
     createdAt: report.createdAt,
     updatedAt: report.updatedAt,
-    triage: suggestTriage(report.description),
+    triage: await suggestTriage(report.description),
   };
 }
 
-function toDetail(report: DetailRow) {
+async function toDetail(report: DetailRow) {
   return {
     id: report.id,
     category: report.category,
@@ -38,7 +38,7 @@ function toDetail(report: DetailRow) {
     createdAt: report.createdAt,
     updatedAt: report.updatedAt,
     updates: report.updates.map((update) => ({ ...toUpdate(update), by: update.moderator?.username ?? null })),
-    triage: suggestTriage(report.description),
+    triage: await suggestTriage(report.description),
   };
 }
 
@@ -52,14 +52,14 @@ export async function listReports(_req: Request, res: Response) {
   const query: ListQuery = res.locals.query;
   const { reports, total } = await findReports(query);
 
-  res.json({ data: reports.map(toSummary), page: query.page, limit: query.limit, total });
+  res.json({ data: await Promise.all(reports.map(toSummary)), page: query.page, limit: query.limit, total });
 }
 
 export async function getReport(req: Request<{ id: string }>, res: Response) {
   const report = await findReport(req.params.id);
   if (!report) throw new AppError(404, 'REPORT_NOT_FOUND', 'Report not found');
 
-  res.json(toDetail(report));
+  res.json(await toDetail(report));
 }
 
 export async function updateStatus(req: Request<{ id: string }>, res: Response) {

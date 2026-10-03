@@ -11,3 +11,4 @@ test.db
 ml/.venv
 ml/__pycache__
 ml/.cache
+.models

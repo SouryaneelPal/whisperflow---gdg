@@ -5,10 +5,13 @@
 ```
 python3 -m venv ml/.venv
 ml/.venv/bin/pip install -r ml/requirements.txt
-ml/.venv/bin/python ml/train.py
+npm run ml:embed
+ml/.venv/bin/python ml/train.py --embeddings
 ```
 
-This rewrites this file, `src/ml/model.json` and `tests/fixtures/triage-parity.json`.
+This rewrites this file, `src/ml/model.json`, `src/ml/embedding-head.json` and the parity
+fixtures in `tests/fixtures/`. Without `--embeddings` only the TF-IDF parts are rebuilt and
+the embeddings section below is left out.
 
 ## Setup
 
@@ -18,7 +21,7 @@ This rewrites this file, `src/ml/model.json` and `tests/fixtures/triage-parity.j
   Scores are mean ± standard deviation across folds; confusion matrices are summed across folds.
 - The shipped model is retrained on all reports after evaluation.
 
-## Category
+## Category (TF-IDF)
 
 | model | accuracy | macro F1 |
 |---|---|---|
@@ -58,6 +61,14 @@ top-class probability is at least the threshold; below it the API returns no cat
 | 0.450 | 10 | 3% | 0.800 |
 | 0.475 | 8 | 3% | 0.750 |
 | 0.500 | 6 | 2% | 1.000 |
+| 0.525 | 2 | 1% | 1.000 |
+| 0.550 | 1 | 0% | 1.000 |
+| 0.575 | 0 | 0% | n/a |
+| 0.600 | 0 | 0% | n/a |
+| 0.625 | 0 | 0% | n/a |
+| 0.650 | 0 | 0% | n/a |
+| 0.675 | 0 | 0% | n/a |
+| 0.700 | 0 | 0% | n/a |
 
 **Chosen: 0.300.** It is the lowest threshold where suggestions are right at least
 75% of the time with at least 30 reports measured. At this
@@ -67,6 +78,55 @@ the probability and top terms, so moderators can see why no category was suggest
 
 Probabilities from the shipped model can run slightly higher than in cross-validation,
 because it is trained on all 300 reports instead of four fifths of them.
+
+## Embeddings (shipped, with TF-IDF as fallback)
+
+`Xenova/all-MiniLM-L6-v2`, quantised ONNX, mean pooling and L2 normalisation, embedded by the same
+code the server runs (`npm run ml:embed`). Logistic regression on the 384-dimensional vectors,
+same folds, baseline and threshold rule as above.
+
+| model | accuracy | macro F1 |
+|---|---|---|
+| majority-class baseline | 0.200 ± 0.000 | 0.067 ± 0.000 |
+| TF-IDF (fallback) | 0.557 ± 0.044 | 0.558 ± 0.042 |
+| ONNX embeddings | 0.823 ± 0.023 | 0.820 ± 0.025 |
+
+| actual \ predicted | CORRUPTION | HARASSMENT | OTHER | SECURITY | TECHNICAL |
+|---|---|---|---|---|---|
+| CORRUPTION | 50 | 0 | 6 | 3 | 1 |
+| HARASSMENT | 0 | 60 | 0 | 0 | 0 |
+| OTHER | 6 | 8 | 39 | 2 | 5 |
+| SECURITY | 3 | 0 | 6 | 47 | 4 |
+| TECHNICAL | 3 | 0 | 2 | 4 | 51 |
+
+| threshold | reports with a suggestion | share | accuracy on those |
+|---|---|---|---|
+| 0.200 (chosen) | 300 | 100% | 0.823 |
+| 0.225 | 300 | 100% | 0.823 |
+| 0.250 | 300 | 100% | 0.823 |
+| 0.275 | 299 | 100% | 0.826 |
+| 0.300 | 293 | 98% | 0.829 |
+| 0.325 | 273 | 91% | 0.868 |
+| 0.350 | 260 | 87% | 0.888 |
+| 0.375 | 234 | 78% | 0.906 |
+| 0.400 | 208 | 69% | 0.909 |
+| 0.425 | 182 | 61% | 0.923 |
+| 0.450 | 159 | 53% | 0.937 |
+| 0.475 | 136 | 45% | 0.949 |
+| 0.500 | 120 | 40% | 0.942 |
+| 0.525 | 109 | 36% | 0.954 |
+| 0.550 | 92 | 31% | 0.967 |
+| 0.575 | 82 | 27% | 0.963 |
+| 0.600 | 67 | 22% | 0.970 |
+| 0.625 | 56 | 19% | 0.982 |
+| 0.650 | 46 | 15% | 0.978 |
+| 0.675 | 31 | 10% | 0.968 |
+| 0.700 | 23 | 8% | 1.000 |
+
+**Chosen: 0.200.** At this threshold 100% of reports get a suggestion and
+82.3% of those are right. This is the lowest value in the grid, one in five classes, so the embedding head never withholds a suggestion: it already meets the accuracy target for every report.
+
+`src/ml/embedding-head.json`: 40 KB.
 
 ## Urgency (tried and rejected)
 

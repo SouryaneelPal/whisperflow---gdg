@@ -1,15 +1,32 @@
 import { CATEGORIES } from '../domain/statusWorkflow';
+import head from '../ml/embedding-head.json';
 import model from '../ml/model.json';
+import { logger } from '../utils/logger';
+import { EMBEDDING_MODEL, Embedder, loadEmbedder } from './embedding.service';
 
-// Mirrors scikit-learn's TfidfVectorizer and predict_proba so results match ml/train.py
-// (checked by tests/triage.test.ts). Suggestions are computed on read and never stored.
+// Both models mirror scikit-learn's predict_proba so results match ml/train.py (checked by
+// tests/triage.test.ts). Suggestions are computed on read and never stored.
+
+type Suggestion = {
+  model: 'embeddings' | 'tfidf';
+  suggestedCategory: string | null;
+  reason: string | null;
+  confidence: number;
+  topTerms: string[];
+};
 
 // A model trained on other labels would suggest values the rest of the API does not know.
-const sameLabels =
-  model.classes.length === CATEGORIES.length && CATEGORIES.every((label) => model.classes.includes(label));
-if (!sameLabels) throw new Error('src/ml/model.json labels do not match CATEGORIES; rerun ml/train.py');
+function checkLabels(classes: string[], file: string) {
+  const same = classes.length === CATEGORIES.length && CATEGORIES.every((label) => classes.includes(label));
+  if (!same) throw new Error(`${file} labels do not match CATEGORIES; rerun ml/train.py`);
+}
+
+checkLabels(model.classes, 'src/ml/model.json');
+checkLabels(head.classes, 'src/ml/embedding-head.json');
 
 const vocabulary = new Map(model.vocabulary.map((term, index) => [term, index]));
+
+let embedder: Embedder | null = null;
 
 // scikit-learn lowercases, then takes runs of two or more word characters (\b\w\w+\b).
 function tokenize(text: string) {
@@ -37,19 +54,12 @@ function vectorize(text: string) {
   return weights;
 }
 
-function predict(x: Map<number, number>) {
-  const scores = model.intercept.map((bias, k) => {
-    let score = bias;
-    for (const [index, w] of x) score += w * model.coef[k][index];
-    return score;
-  });
-
+function softmaxTop(scores: number[]) {
   const max = Math.max(...scores);
   const exps = scores.map((s) => Math.exp(s - max));
   const total = exps.reduce((sum, e) => sum + e, 0);
-  const best = scores.indexOf(max);
-
-  return { index: best, label: model.classes[best], probability: exps[best] / total };
+  const index = scores.indexOf(max);
+  return { index, probability: exps[index] / total };
 }
 
 function topTerms(x: Map<number, number>, coef: number[]) {
@@ -61,16 +71,72 @@ function topTerms(x: Map<number, number>, coef: number[]) {
     .map((t) => t.term);
 }
 
-// Below the threshold chosen in ml/metrics.md the top category is wrong too often to show.
-export function suggestTriage(text: string) {
-  const x = vectorize(text);
-  const top = predict(x);
-  const confident = top.probability >= model.threshold;
-
+// Below each model's threshold (chosen in ml/metrics.md) its top category is wrong too often to show.
+function toSuggestion(
+  name: Suggestion['model'],
+  label: string,
+  probability: number,
+  threshold: number,
+  terms: string[],
+): Suggestion {
+  const confident = probability >= threshold;
   return {
-    suggestedCategory: confident ? top.label : null,
+    model: name,
+    suggestedCategory: confident ? label : null,
     reason: confident ? null : 'low confidence',
-    confidence: Math.round(top.probability * 1000) / 1000,
-    topTerms: topTerms(x, model.coef[top.index]),
+    confidence: Math.round(probability * 1000) / 1000,
+    topTerms: terms,
   };
+}
+
+function suggestWithTfidf(text: string) {
+  const x = vectorize(text);
+  const scores = model.intercept.map((bias, k) => {
+    let score = bias;
+    for (const [index, w] of x) score += w * model.coef[k][index];
+    return score;
+  });
+  const top = softmaxTop(scores);
+
+  return toSuggestion('tfidf', model.classes[top.index], top.probability, model.threshold, topTerms(x, model.coef[top.index]));
+}
+
+// Embeddings carry no per-word weights, so this model has no top terms to show.
+export function classifyEmbedding(vector: number[]) {
+  const scores = head.intercept.map((bias, k) => head.coef[k].reduce((sum, c, i) => sum + c * vector[i], bias));
+  const top = softmaxTop(scores);
+
+  return toSuggestion('embeddings', head.classes[top.index], top.probability, head.threshold, []);
+}
+
+// Loads in the background. Until it is ready, or if it fails, suggestions come from TF-IDF.
+export function startEmbeddings(load: () => Promise<Embedder> = loadEmbedder) {
+  embedder = null;
+
+  if (head.embeddingModel !== EMBEDDING_MODEL) {
+    logger.warn('src/ml/embedding-head.json was trained on another embedding model; using TF-IDF');
+    return Promise.resolve();
+  }
+
+  return load().then(
+    (loaded) => {
+      embedder = loaded;
+      logger.info('Embedding model ready');
+    },
+    (err: unknown) => {
+      logger.warn(`Embedding model unavailable, using TF-IDF: ${err instanceof Error ? err.message : 'unknown error'}`);
+    },
+  );
+}
+
+export async function suggestTriage(text: string): Promise<Suggestion> {
+  if (!embedder) return suggestWithTfidf(text);
+
+  try {
+    return classifyEmbedding(await embedder(text));
+  } catch (err) {
+    // Only the error name is logged; inference errors could otherwise quote report text.
+    logger.warn(`Embedding failed, using TF-IDF: ${err instanceof Error ? err.name : 'unknown error'}`);
+    return suggestWithTfidf(text);
+  }
 }

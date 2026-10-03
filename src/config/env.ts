@@ -24,6 +24,7 @@ const schema = z
     SUBMIT_LIMIT_PER_HOUR: z.coerce.number().int().positive().default(30),
     TRACK_LIMIT_PER_15_MIN: z.coerce.number().int().positive().default(30),
     TRUST_PROXY: z.coerce.number().int().min(0).default(0),
+    ML_EMBEDDINGS: z.enum(['on', 'off']).default('on'),
   })
   .refine((env) => env.NODE_ENV !== 'production' || !env.JWT_SECRET.startsWith('change-me'), {
     message: 'Set a real secret in production',

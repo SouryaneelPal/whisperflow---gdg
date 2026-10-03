@@ -607,6 +607,14 @@ components:
         read and never stored. Moderators only; reporters never see it. When the
         model is not confident enough, suggestedCategory is null and reason says why.
       properties:
+        model:
+          type: string
+          enum: [embeddings, tfidf]
+          description: >
+            Which model made the suggestion. The server uses sentence embeddings once
+            they have loaded and falls back to TF-IDF while they load, if they fail,
+            or when embeddings are switched off.
+          example: embeddings
         suggestedCategory:
           allOf:
             - $ref: "#/components/schemas/Category"
@@ -625,10 +633,13 @@ components:
         topTerms:
           type: array
           maxItems: 3
-          description: Words or word pairs from the text that pushed hardest toward the most likely category
+          description: >
+            Words or word pairs from the text that pushed hardest toward the most
+            likely category. Only the tfidf model fills this; it is always empty for
+            embeddings.
           items:
             type: string
-          example: [vendor, cut, purchasing]
+          example: []
     LeakCheckRequest:
       type: object
       additionalProperties: false

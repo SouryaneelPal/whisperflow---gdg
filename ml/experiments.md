@@ -1,7 +1,9 @@
 # Embeddings experiment
 
 Offline comparison only; nothing here changes the shipped model. Reproduce with
-`ml/.venv/bin/python ml/embeddings_experiment.py` after installing `ml/requirements.txt`.
+`ml/.venv/bin/python ml/embeddings_experiment.py` after
+`ml/.venv/bin/pip install -r ml/requirements-experiment.txt` (torch and sentence-transformers,
+about 1 GB). The shipped models need only `ml/requirements.txt`.
 
 Same 300 reports, same stratified 5-fold split (`random_state=42`) and the
 same threshold rule as `train.py`: the lowest threshold where suggestions are right at least
@@ -32,6 +34,14 @@ same threshold rule as `train.py`: the lowest threshold where suggestions are ri
 | 0.450 | 10 | 3% | 0.800 |
 | 0.475 | 8 | 3% | 0.750 |
 | 0.500 | 6 | 2% | 1.000 |
+| 0.525 | 2 | 1% | 1.000 |
+| 0.550 | 1 | 0% | 1.000 |
+| 0.575 | 0 | 0% | nan |
+| 0.600 | 0 | 0% | nan |
+| 0.625 | 0 | 0% | nan |
+| 0.650 | 0 | 0% | nan |
+| 0.675 | 0 | 0% | nan |
+| 0.700 | 0 | 0% | nan |
 
 ### Embedding thresholds
 
@@ -50,6 +60,14 @@ same threshold rule as `train.py`: the lowest threshold where suggestions are ri
 | 0.450 | 162 | 54% | 0.944 |
 | 0.475 | 139 | 46% | 0.950 |
 | 0.500 | 122 | 41% | 0.943 |
+| 0.525 | 109 | 36% | 0.954 |
+| 0.550 | 92 | 31% | 0.957 |
+| 0.575 | 80 | 27% | 0.963 |
+| 0.600 | 67 | 22% | 0.970 |
+| 0.625 | 59 | 20% | 0.983 |
+| 0.650 | 47 | 16% | 0.979 |
+| 0.675 | 33 | 11% | 0.970 |
+| 0.700 | 25 | 8% | 1.000 |
 
 ### Summed confusion matrices
 
@@ -73,6 +91,20 @@ Embeddings:
 | SECURITY | 3 | 0 | 6 | 47 | 4 |
 | TECHNICAL | 3 | 0 | 2 | 3 | 52 |
 
+## Quantised ONNX versus torch
+
+The server uses the quantised ONNX export of the same model through transformers.js
+(`Xenova/all-MiniLM-L6-v2`, int8). These are its vectors for the same 300 reports, from
+`npm run ml:embed`, scored the same way.
+
+| embeddings | accuracy | macro F1 | threshold by the 75% rule |
+|---|---|---|---|
+| torch (sentence-transformers) | 0.833 ± 0.026 | 0.830 ± 0.029 | 0.200 (100% covered, 83.3% right) |
+| quantised ONNX (transformers.js) | 0.823 ± 0.023 | 0.820 ± 0.025 | 0.200 (100% covered, 82.3% right) |
+
+Cosine similarity between the torch and ONNX vector for each report: mean 0.9961,
+lowest 0.9932.
+
 ## Cost
 
 Measured on arm64 Darwin, Python 3.14.7, CPU only.
@@ -84,12 +116,12 @@ NumPy and scikit-learn as well as torch and the model. Memory and timing vary be
 |---|---|
 | embedding model download (`sentence-transformers/all-MiniLM-L6-v2`) | 87 MB |
 | torch package on disk | 555 MB |
-| peak memory before importing torch | 144 MB |
-| peak memory after loading the model | 469 MB |
-| peak memory after embedding all 300 texts | 599 MB |
-| time to embed all 300 texts | 0.3 s |
+| peak memory before importing torch | 146 MB |
+| peak memory after loading the model | 468 MB |
+| peak memory after embedding all 300 texts | 579 MB |
+| time to embed all 300 texts | 0.4 s |
 | one prediction, TF-IDF (median of 50) | 0.30 ms |
-| one prediction, embeddings (median of 50) | 4.91 ms |
+| one prediction, embeddings (median of 50) | 5.01 ms |
 
 ## Conclusion
 
@@ -107,7 +139,7 @@ latency was measured on this machine with every CPU core available to torch; a s
 server core would be slower.
 
 **Would it fit on a 512 MB server?** Not as measured. This Python process peaked
-at 599 MB with torch and the model loaded, before any of the Node API is counted.
+at 579 MB with torch and the model loaded, before any of the Node API is counted.
 The model file itself is only 87 MB; most of the memory is the torch runtime. A
 lighter runtime (for example the same model exported to ONNX and run from Node) could need much
 less, but that was not measured here.
