@@ -603,28 +603,29 @@ components:
     Triage:
       type: object
       description: >
-        Suggestion from a small local model, computed when the report is read and
-        never stored. Moderators only; reporters never see it.
+        Category suggestion from a small local model, computed when the report is
+        read and never stored. Moderators only; reporters never see it. When the
+        model is not confident enough, suggestedCategory is null and reason says why.
       properties:
         suggestedCategory:
-          $ref: "#/components/schemas/Category"
+          allOf:
+            - $ref: "#/components/schemas/Category"
+          nullable: true
+        reason:
+          type: string
+          nullable: true
+          description: Why no category is suggested, or null when one is
+          example: low confidence
         confidence:
           type: number
           minimum: 0
           maximum: 1
-          example: 0.62
-        suggestedUrgency:
-          type: string
-          enum: [LOW, MEDIUM, HIGH]
-        urgencyConfidence:
-          type: number
-          minimum: 0
-          maximum: 1
-          example: 0.48
+          description: Probability of the most likely category, shown even when no category is suggested
+          example: 0.41
         topTerms:
           type: array
           maxItems: 3
-          description: Words or word pairs from the text that pushed hardest toward the suggested category
+          description: Words or word pairs from the text that pushed hardest toward the most likely category
           items:
             type: string
           example: [vendor, cut, purchasing]

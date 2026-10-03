@@ -219,7 +219,7 @@ describe('GET /api/moderator/reports/:id', () => {
       createdAt: expect.any(String),
       updatedAt: expect.any(String),
       updates: [{ status: 'SUBMITTED', message: 'Report received', createdAt: expect.any(String), by: null }],
-      triage: expect.objectContaining({ suggestedCategory: expect.any(String) }),
+      triage: expect.objectContaining({ confidence: expect.any(Number) }),
     });
   });
 

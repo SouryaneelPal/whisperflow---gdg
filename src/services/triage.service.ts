@@ -1,20 +1,14 @@
-import { CATEGORIES, URGENCIES } from '../domain/statusWorkflow';
+import { CATEGORIES } from '../domain/statusWorkflow';
 import model from '../ml/model.json';
 
-// Inference for the models trained by ml/train.py. Every step mirrors scikit-learn's
+// Inference for the model trained by ml/train.py. Every step mirrors scikit-learn's
 // TfidfVectorizer and LogisticRegression.predict_proba, so results match the Python
 // side (checked by tests/triage.test.ts). Suggestions are computed on read and never stored.
 
-type Head = { classes: string[]; coef: number[][]; intercept: number[] };
-
 // A model trained on other labels would suggest values the rest of the API does not know.
-function checkLabels(head: Head, expected: readonly string[]) {
-  const same = head.classes.length === expected.length && expected.every((label) => head.classes.includes(label));
-  if (!same) throw new Error('src/ml/model.json labels do not match the API constants; rerun ml/train.py');
-}
-
-checkLabels(model.category, CATEGORIES);
-checkLabels(model.urgency, URGENCIES);
+const sameLabels =
+  model.classes.length === CATEGORIES.length && CATEGORIES.every((label) => model.classes.includes(label));
+if (!sameLabels) throw new Error('src/ml/model.json labels do not match CATEGORIES; rerun ml/train.py');
 
 const vocabulary = new Map(model.vocabulary.map((term, index) => [term, index]));
 
@@ -44,10 +38,10 @@ function vectorize(text: string) {
   return weights;
 }
 
-function predict(head: Head, x: Map<number, number>) {
-  const scores = head.intercept.map((bias, k) => {
+function predict(x: Map<number, number>) {
+  const scores = model.intercept.map((bias, k) => {
     let score = bias;
-    for (const [index, w] of x) score += w * head.coef[k][index];
+    for (const [index, w] of x) score += w * model.coef[k][index];
     return score;
   });
 
@@ -56,7 +50,7 @@ function predict(head: Head, x: Map<number, number>) {
   const total = exps.reduce((sum, e) => sum + e, 0);
   const best = scores.indexOf(max);
 
-  return { index: best, label: head.classes[best], probability: exps[best] / total };
+  return { index: best, label: model.classes[best], probability: exps[best] / total };
 }
 
 function topTerms(x: Map<number, number>, coef: number[]) {
@@ -68,18 +62,16 @@ function topTerms(x: Map<number, number>, coef: number[]) {
     .map((t) => t.term);
 }
 
-const round = (n: number) => Math.round(n * 1000) / 1000;
-
+// Below the threshold chosen in ml/metrics.md the top category is wrong too often to show.
 export function suggestTriage(text: string) {
   const x = vectorize(text);
-  const category = predict(model.category, x);
-  const urgency = predict(model.urgency, x);
+  const top = predict(x);
+  const confident = top.probability >= model.threshold;
 
   return {
-    suggestedCategory: category.label,
-    confidence: round(category.probability),
-    suggestedUrgency: urgency.label,
-    urgencyConfidence: round(urgency.probability),
-    topTerms: topTerms(x, model.category.coef[category.index]),
+    suggestedCategory: confident ? top.label : null,
+    reason: confident ? null : 'low confidence',
+    confidence: Math.round(top.probability * 1000) / 1000,
+    topTerms: topTerms(x, model.coef[top.index]),
   };
 }

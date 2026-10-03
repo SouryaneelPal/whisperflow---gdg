@@ -12,5 +12,3 @@ export const TRANSITIONS: Record<Status, readonly Status[]> = {
 };
 
 export const OPEN_STATUSES: Status[] = ['SUBMITTED', 'UNDER_REVIEW'];
-
-export const URGENCIES = ['LOW', 'MEDIUM', 'HIGH'] as const;
