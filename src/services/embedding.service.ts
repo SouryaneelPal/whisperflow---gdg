@@ -7,15 +7,20 @@ const MODELS_DIR = path.join(__dirname, '../../.models');
 
 export type Embedder = (text: string) => Promise<number[]>;
 
-export async function loadEmbedder({ download = false } = {}): Promise<Embedder> {
+export async function loadEmbedder({ download = false, modelsDir = MODELS_DIR } = {}): Promise<Embedder> {
   // Imported on demand so the native ONNX runtime is only loaded when embeddings are used.
   const { env: hub, pipeline } = await import('@huggingface/transformers');
 
-  hub.cacheDir = MODELS_DIR;
-  // The server only reads the copy fetched at build time; it never downloads at runtime.
+  hub.cacheDir = modelsDir;
+  hub.localModelPath = modelsDir;
+  // Outside the build step the model is read from modelsDir only. A missing model fails here,
+  // and the caller falls back to TF-IDF; nothing is downloaded at runtime.
   hub.allowRemoteModels = download;
 
-  const extract = await pipeline('feature-extraction', EMBEDDING_MODEL, { dtype: DTYPE });
+  const extract = await pipeline('feature-extraction', EMBEDDING_MODEL, {
+    dtype: DTYPE,
+    local_files_only: !download,
+  });
 
   // Mean pooling and L2 normalisation match how sentence-transformers uses this model.
   return async (text) => {

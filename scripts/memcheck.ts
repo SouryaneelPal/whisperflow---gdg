@@ -85,7 +85,7 @@ async function measure(embeddings: boolean): Promise<Run> {
   }, 100);
 
   try {
-    await waitForLine(server, embeddings ? /Embedding model ready/ : /listening/, /unavailable|Error/);
+    await waitForLine(server, embeddings ? /Triage model: embeddings/ : /Triage model: tfidf/, /unavailable|Error/);
     const readyMb = rssMb(pid);
     const base = `http://127.0.0.1:${PORT}`;
 

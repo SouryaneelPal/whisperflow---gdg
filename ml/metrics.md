@@ -83,7 +83,8 @@ because it is trained on all 300 reports instead of four fifths of them.
 
 `Xenova/all-MiniLM-L6-v2`, quantised ONNX, mean pooling and L2 normalisation, embedded by the same
 code the server runs (`npm run ml:embed`). Logistic regression on the 384-dimensional vectors,
-same folds, baseline and threshold rule as above.
+same folds and baseline as above. The threshold rule is the same except for its accuracy
+target, explained below.
 
 | model | accuracy | macro F1 |
 |---|---|---|
@@ -101,14 +102,14 @@ same folds, baseline and threshold rule as above.
 
 | threshold | reports with a suggestion | share | accuracy on those |
 |---|---|---|---|
-| 0.200 (chosen) | 300 | 100% | 0.823 |
+| 0.200 | 300 | 100% | 0.823 |
 | 0.225 | 300 | 100% | 0.823 |
 | 0.250 | 300 | 100% | 0.823 |
 | 0.275 | 299 | 100% | 0.826 |
 | 0.300 | 293 | 98% | 0.829 |
 | 0.325 | 273 | 91% | 0.868 |
 | 0.350 | 260 | 87% | 0.888 |
-| 0.375 | 234 | 78% | 0.906 |
+| 0.375 (chosen) | 234 | 78% | 0.906 |
 | 0.400 | 208 | 69% | 0.909 |
 | 0.425 | 182 | 61% | 0.923 |
 | 0.450 | 159 | 53% | 0.937 |
@@ -123,8 +124,18 @@ same folds, baseline and threshold rule as above.
 | 0.675 | 31 | 10% | 0.968 |
 | 0.700 | 23 | 8% | 1.000 |
 
-**Chosen: 0.200.** At this threshold 100% of reports get a suggestion and
-82.3% of those are right. This is the lowest value in the grid, one in five classes, so the embedding head never withholds a suggestion: it already meets the accuracy target for every report.
+**Chosen: 0.375.** It is the lowest threshold where suggestions are right at least
+90% of the time with at least 30 reports measured. At this
+threshold 78% of reports get a suggestion and 90.6% of those are right,
+against 82.3% when every report gets one.
+
+**Why the target differs from TF-IDF.** With five classes the top probability is always at
+least 0.200, the bottom of the grid. The embedding head is already right
+82.3% of the time there, so the 75% target is met at
+0.200 and would never withhold a suggestion. A 90% target makes the
+threshold act on the reports the head is least sure of. TF-IDF keeps 75%: it is right
+only 55.7% of the time unfiltered, so 75% already filters most reports, and a
+90% target would leave only 11% with a suggestion.
 
 `src/ml/embedding-head.json`: 40 KB.
 

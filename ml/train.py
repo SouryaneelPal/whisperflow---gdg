@@ -33,6 +33,9 @@ FOLDS = 5
 # A suggestion is only shown when it is right at least this often in cross-validation,
 # and the threshold must still leave enough reports with a suggestion to be measured.
 TARGET_ACCURACY = 0.75
+# The embedding head already meets 75% with no filtering, so that target would never withhold
+# anything; it needs a higher bar for the threshold to act at all.
+EMBEDDING_TARGET_ACCURACY = 0.90
 MIN_SUGGESTED = 30
 THRESHOLDS = [round(0.20 + 0.025 * i, 3) for i in range(21)]
 
@@ -141,10 +144,10 @@ def threshold_lines(rows, threshold):
     return "\n".join(lines)
 
 
-def choose_threshold(rows):
+def choose_threshold(rows, target=TARGET_ACCURACY):
     # The lowest threshold that meets the accuracy target keeps the most suggestions.
     for threshold, count, _, accuracy in rows:
-        if count >= MIN_SUGGESTED and accuracy >= TARGET_ACCURACY:
+        if count >= MIN_SUGGESTED and accuracy >= target:
             return threshold
     return None
 
@@ -221,25 +224,24 @@ def embedding_section(texts, categories, category, category_baseline):
     embedding_model, vectors = load_embeddings(texts)
     result = cross_validate(vectors, categories, lambda: LogisticRegression(max_iter=2000))
     rows = threshold_table(result)
-    threshold = choose_threshold(rows)
+    threshold = choose_threshold(rows, EMBEDDING_TARGET_ACCURACY)
     if threshold is None:
         raise SystemExit("No embedding threshold reaches the accuracy target.")
     chosen = next(row for row in rows if row[0] == threshold)
+    at_75 = choose_threshold(rows)
+    unfiltered = rows[0]
+    tfidf_rows = threshold_table(category)
+    tfidf_at_90 = next(row for row in tfidf_rows if row[0] == choose_threshold(tfidf_rows, EMBEDDING_TARGET_ACCURACY))
 
     export_embedding_head(embedding_model, vectors, categories, threshold)
     size_kb = EMBEDDING_HEAD.stat().st_size / 1024
-    floor_note = (
-        " This is the lowest value in the grid, one in five classes, so the embedding head never"
-        " withholds a suggestion: it already meets the accuracy target for every report."
-        if threshold == THRESHOLDS[0]
-        else ""
-    )
 
     return f"""## Embeddings (shipped, with TF-IDF as fallback)
 
 `{embedding_model}`, quantised ONNX, mean pooling and L2 normalisation, embedded by the same
 code the server runs (`npm run ml:embed`). Logistic regression on the 384-dimensional vectors,
-same folds, baseline and threshold rule as above.
+same folds and baseline as above. The threshold rule is the same except for its accuracy
+target, explained below.
 
 | model | accuracy | macro F1 |
 |---|---|---|
@@ -251,8 +253,18 @@ same folds, baseline and threshold rule as above.
 
 {threshold_lines(rows, threshold)}
 
-**Chosen: {threshold:.3f}.** At this threshold {chosen[2]:.0%} of reports get a suggestion and
-{chosen[3]:.1%} of those are right.{floor_note}
+**Chosen: {threshold:.3f}.** It is the lowest threshold where suggestions are right at least
+{EMBEDDING_TARGET_ACCURACY:.0%} of the time with at least {MIN_SUGGESTED} reports measured. At this
+threshold {chosen[2]:.0%} of reports get a suggestion and {chosen[3]:.1%} of those are right,
+against {unfiltered[3]:.1%} when every report gets one.
+
+**Why the target differs from TF-IDF.** With five classes the top probability is always at
+least 0.200, the bottom of the grid. The embedding head is already right
+{unfiltered[3]:.1%} of the time there, so the {TARGET_ACCURACY:.0%} target is met at
+{at_75:.3f} and would never withhold a suggestion. A {EMBEDDING_TARGET_ACCURACY:.0%} target makes the
+threshold act on the reports the head is least sure of. TF-IDF keeps {TARGET_ACCURACY:.0%}: it is right
+only {tfidf_rows[0][3]:.1%} of the time unfiltered, so 75% already filters most reports, and a
+{EMBEDDING_TARGET_ACCURACY:.0%} target would leave only {tfidf_at_90[2]:.0%} with a suggestion.
 
 `src/ml/embedding-head.json`: {size_kb:.0f} KB.
 """

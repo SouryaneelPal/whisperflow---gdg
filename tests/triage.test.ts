@@ -110,7 +110,7 @@ describe('choosing a model', () => {
     await startEmbeddings(() => Promise.reject(new Error('model files missing')));
 
     expect((await suggestTriage('The vendor pays the purchasing lead.')).model).toBe('tfidf');
-    expect(warn).toHaveBeenCalledWith('Embedding model unavailable, using TF-IDF: model files missing');
+    expect(warn).toHaveBeenCalledWith('Triage model: tfidf (embedding model unavailable: model files missing)');
   });
 
   it('uses embeddings once the model is ready', async () => {

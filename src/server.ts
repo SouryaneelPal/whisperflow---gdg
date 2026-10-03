@@ -9,6 +9,7 @@ const server = app.listen(env.PORT, () => {
 });
 
 if (env.ML_EMBEDDINGS === 'on') startEmbeddings();
+else logger.info('Triage model: tfidf (ML_EMBEDDINGS=off)');
 
 function shutdown(signal: string) {
   logger.info(`${signal} received, shutting down`);

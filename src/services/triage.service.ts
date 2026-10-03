@@ -114,17 +114,17 @@ export function startEmbeddings(load: () => Promise<Embedder> = loadEmbedder) {
   embedder = null;
 
   if (head.embeddingModel !== EMBEDDING_MODEL) {
-    logger.warn('src/ml/embedding-head.json was trained on another embedding model; using TF-IDF');
+    logger.warn('Triage model: tfidf (embedding-head.json was trained on another embedding model)');
     return Promise.resolve();
   }
 
   return load().then(
     (loaded) => {
       embedder = loaded;
-      logger.info('Embedding model ready');
+      logger.info(`Triage model: embeddings (${EMBEDDING_MODEL})`);
     },
     (err: unknown) => {
-      logger.warn(`Embedding model unavailable, using TF-IDF: ${err instanceof Error ? err.message : 'unknown error'}`);
+      logger.warn(`Triage model: tfidf (embedding model unavailable: ${err instanceof Error ? err.message : 'unknown error'})`);
     },
   );
 }
