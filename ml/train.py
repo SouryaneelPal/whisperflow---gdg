@@ -128,7 +128,7 @@ def choose_threshold(rows):
     for threshold, count, _, accuracy in rows:
         if count >= MIN_SUGGESTED and accuracy >= TARGET_ACCURACY:
             return threshold
-    raise SystemExit("No threshold reaches the accuracy target; revisit TARGET_ACCURACY or the data.")
+    return None
 
 
 def export(texts, categories, min_df, threshold):
@@ -175,6 +175,8 @@ def main():
 
     rows = threshold_table(category)
     threshold = choose_threshold(rows)
+    if threshold is None:
+        raise SystemExit("No threshold reaches the accuracy target; revisit TARGET_ACCURACY or the data.")
     chosen = next(row for row in rows if row[0] == threshold)
 
     urgency = cross_validate(texts, urgencies, lambda: make_pipeline_for(min_df))
